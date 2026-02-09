@@ -10,5 +10,87 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
+  url      = env("DATABASE_URL")
 }
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  transactions Transaction[]
+  auditLogs   AuditLog[]
+}
+
+enum Role {
+  admin
+  operator
+  viewer
+}
+
+model Category {
+  id          Int      @id @default(autoincrement())
+  name        String
+  color       String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  products Product[]
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique 
+  name        String
+  unit        String
+  stock       Int
+  stockMin    Int
+  isActive    Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+
+  categoryId  Int
+  category    Category @relation(fields: [categoryId], references: [id])
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id        Int      @id @default(autoincrement())
+  type      TransactionType
+  qty       Int
+  source    String?
+  destination String?
+  pic       String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+enum TransactionType {
+  IN
+  OUT
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  action      String
+  tableName   String
+  description String
+  createdAt   DateTime @default(now())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+}
+
+
