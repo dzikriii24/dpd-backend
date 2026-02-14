@@ -1,6 +1,5 @@
 import { Router } from "express"
 import prisma from "../prisma"
-import { connect } from "node:http2"
 
 const router = Router()
 
