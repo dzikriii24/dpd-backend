@@ -5,8 +5,7 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -16,15 +15,12 @@ datasource db {
 
 model User {
   id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique
+  username  String   @unique
   password  String
-  role      Role
-  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
   transactions Transaction[]
-  auditLogs   AuditLog[]
+  auditLogs    AuditLog[]
 }
 
 enum Role {

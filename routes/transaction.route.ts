@@ -1,111 +1,118 @@
-import { Router } from "express"
-import prisma from "../prisma"
+import { Router } from "express";
+import prisma from "../prisma";
 
-const router = Router()
+const router = Router();
 
-//CREATE TRANSACTION
+// 1. CREATE TRANSACTION (Masuk/Keluar)
 router.post("/", async (req, res) => {
-    try {
-        const {
-            productId,
-            type, //IN OUT
-            qty,
-            source,
-            destination,
-            pic,
-            note,
-            userId,
-        } = req.body
+  try {
+    const {
+      productId,
+      type, // "IN" atau "OUT"
+      qty,
+      source,
+      destination,
+      pic,
+      note,
+      userId,
+    } = req.body;
 
-        if (!productId || !type || !qty) {
-            return res.status(400).json({
-                message: "wajib isi Product ID, tipe, dan jumlah"
-            })
-        }
-
-        const productIdNumber = Number(productId)
-        const qtyNumber = Number(qty)
-        const userIdNumber = Number(userId)
-
-        const product = await prisma.product.findUnique({
-            where: { id: productIdNumber },
-        })
-
-        if (!product) {
-            return res.status(404).json({ message: "Product not found" })
-        }
-
-        //biar stok ga minus
-        if (type === "OUT" && product.stock < qtyNumber) {
-            return res.status(400).json({
-                message: "Stok tidak mencukupi",
-            })
-        }
-
-        //TRANSAKSI 
-        const result = await prisma.$transaction(async (tx) => {
-            const transaction = await tx.transaction.create({
-                data: {
-                    type,
-                    qty: qtyNumber,
-                    source,
-                    destination,
-                    pic,
-                    note,
-
-                    product: {
-                        connect: {
-                            id: productIdNumber,
-                        },
-                    },
-
-                    user: {
-                        connect: { id: userIdNumber },
-                    }
-                },
-            })
-
-            await tx.product.update({
-                where: { id: productId },
-                data: {
-                    stock:
-                    type === "IN"
-                    ? product.stock + qty
-                    : product.stock - qty,
-                },
-            })
-
-            return transaction
-        })
-
-        res.status(201).json(result)
-    } catch (error: any) {
-        res.status(500).json({ message: error.message })
+    // Validasi input
+    if (!productId || !type || !qty) {
+      return res.status(400).json({
+        message: "Wajib isi Product ID, tipe (IN/OUT), dan jumlah (qty)",
+      });
     }
-})
 
-//READ ALL TRANSACTION
-router.get("/", async (_req, res) => {
-    const transactions  = await prisma.transaction.findMany({
-        include: {
-            product: true,
+    const productIdNumber = Number(productId);
+    const qtyNumber = Number(qty);
+    const userIdNumber = Number(userId || 1); // Fallback ke ID 1 jika tidak ada session
+
+    // Ambil data produk untuk cek stok awal
+    const product = await prisma.product.findUnique({
+      where: { id: productIdNumber },
+    });
+
+    if (!product) {
+      return res.status(404).json({ message: "Produk tidak ditemukan" });
+    }
+
+    // Validasi agar stok tidak minus jika barang keluar
+    if (type === "OUT" && product.stock < qtyNumber) {
+      return res.status(400).json({
+        message: `Stok tidak mencukupi. Sisa stok saat ini: ${product.stock}`,
+      });
+    }
+
+    // JALANKAN TRANSAKSI (Simpan riwayat + Update stok sekaligus)
+    const result = await prisma.$transaction(async (tx) => {
+      // Buat record transaksi
+      const transaction = await tx.transaction.create({
+        data: {
+          type,
+          qty: qtyNumber,
+          source,
+          destination,
+          pic,
+          note,
+          product: {
+            connect: { id: productIdNumber },
+          },
+          user: {
+            connect: { id: userIdNumber },
+          },
         },
-        orderBy: { createdAt: "desc" },
-    })
+      });
 
-    res.json(transactions)
-})
+      // Update stok produk
+      await tx.product.update({
+        where: { id: productIdNumber },
+        data: {
+          stock:
+            type === "IN"
+              ? product.stock + qtyNumber // Pastikan pakai qtyNumber (angka)
+              : product.stock - qtyNumber,
+        },
+      });
 
-//READ BY PRODUCT
-router.get("/product/:productId", async (req, res) => {
-    const productId = Number(req.params.productId)
+      return transaction;
+    });
 
+    res.status(201).json(result);
+  } catch (error: any) {
+    console.error("Error creating transaction:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// 2. READ ALL TRANSACTIONS (Untuk tabel Transaksi.tsx)
+router.get("/", async (_req, res) => {
+  try {
     const transactions = await prisma.transaction.findMany({
-        where: { productId },
-        orderBy: { createdAt: "desc" },
-    })
+      include: {
+        product: true, // Biar nama barang muncul di tabel
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(transactions);
+  } catch (error: any) {
+    res.status(500).json({ message: "Gagal mengambil data transaksi" });
+  }
+});
 
-    res.json(transactions)
-})
+// 3. READ BY PRODUCT (Opsional: buat history per barang)
+router.get("/product/:productId", async (req, res) => {
+  try {
+    const productId = Number(req.params.productId);
+    const transactions = await prisma.transaction.findMany({
+      where: { productId },
+      include: { product: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(transactions);
+  } catch (error: any) {
+    res.status(500).json({ message: "Gagal mengambil history produk" });
+  }
+});
 
-export default router
+export default router;
