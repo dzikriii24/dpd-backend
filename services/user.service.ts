@@ -1,14 +1,14 @@
 import prisma from "../prisma";
 
-export const login = async (username: string, password: string) => {
-  // 0. Proteksi Tambahan: Pastikan username ada isinya sebelum diproses Prisma
-  if (!username) {
-    throw new Error("Username tidak boleh kosong!");
+export const login = async (email: string, password: string) => {
+  // 0. Proteksi Tambahan: Pastikan email ada isinya sebelum diproses Prisma
+  if (!email) {
+    throw new Error("Email tidak boleh kosong!");
   }
 
-  // 1. Cari user berdasarkan username
+  // 1. Cari user berdasarkan email
   const user = await prisma.user.findUnique({
-    where: { username: username }, // Di sini titik errornya kalau username = undefined
+    where: { email: email }, // Di sini titik errornya kalau email = undefined
   });
 
   // 2. Cek apakah user ada
@@ -26,6 +26,6 @@ export const login = async (username: string, password: string) => {
   return {
     message: "Login Berhasil",
     user: userWithoutPassword,
-    token: "ini_token_dummy_nanti_pake_jwt" 
+    token: "ini_token_dummy_nanti_pake_jwt"
   };
 };

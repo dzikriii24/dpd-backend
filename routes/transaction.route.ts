@@ -26,7 +26,28 @@ router.post("/", async (req, res) => {
 
     const productIdNumber = Number(productId);
     const qtyNumber = Number(qty);
-    const userIdNumber = Number(userId || 1); // Fallback ke ID 1 jika tidak ada session
+    let userIdNumber = Number(userId || 1);
+
+    // Pastikan user ada, jika tidak, pakai user pertama (fallback untuk FK constraint bypass di local bypass)
+    let checkUser = await prisma.user.findUnique({ where: { id: userIdNumber } });
+    if (!checkUser) {
+      const firstUser = await prisma.user.findFirst();
+      if (!firstUser) {
+        // Create an automatic fallback user if DB is completely empty
+        checkUser = await prisma.user.create({
+          data: {
+            name: "System Admin",
+            email: "admin@system.local",
+            password: "defaultpassword",
+            role: "admin",
+            isActive: true
+          }
+        });
+        userIdNumber = checkUser.id;
+      } else {
+        userIdNumber = firstUser.id;
+      }
+    }
 
     // Ambil data produk untuk cek stok awal
     const product = await prisma.product.findUnique({
@@ -44,7 +65,7 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // JALANKAN TRANSAKSI (Simpan riwayat + Update stok sekaligus)
+    // JALANKAN TRANSAKSI (Simpan riwayat + Update stok + Audit Log sekaligus)
     const result = await prisma.$transaction(async (tx) => {
       // Buat record transaksi
       const transaction = await tx.transaction.create({
@@ -70,9 +91,21 @@ router.post("/", async (req, res) => {
         data: {
           stock:
             type === "IN"
-              ? product.stock + qtyNumber // Pastikan pakai qtyNumber (angka)
+              ? product.stock + qtyNumber
               : product.stock - qtyNumber,
         },
+      });
+
+      // Buat Audit Log
+      await tx.auditLog.create({
+        data: {
+          action: type === "IN" ? "TRANSACTION_IN" : "TRANSACTION_OUT",
+          tableName: "Transaction",
+          description: `Mencatat transaksi ${type === "IN" ? "masuk" : "keluar"} sebanyak ${qtyNumber} untuk barang ${product.name} (${product.code}). PIC: ${pic || '-'}`,
+          user: {
+            connect: { id: userIdNumber }
+          }
+        }
       });
 
       return transaction;
@@ -81,7 +114,7 @@ router.post("/", async (req, res) => {
     res.status(201).json(result);
   } catch (error: any) {
     console.error("Error creating transaction:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message || "Gagal membuat transaksi" });
   }
 });
 
@@ -112,6 +145,144 @@ router.get("/product/:productId", async (req, res) => {
     res.json(transactions);
   } catch (error: any) {
     res.status(500).json({ message: "Gagal mengambil history produk" });
+  }
+});
+
+// 4. READ BY ID (Untuk TransactionDetail.tsx)
+router.get("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const transaction = await prisma.transaction.findUnique({
+      where: { id },
+      include: { product: true },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ message: "Transaksi tidak ditemukan" });
+    }
+
+    res.json(transaction);
+  } catch (error: any) {
+    res.status(500).json({ message: "Gagal mengambil detail transaksi" });
+  }
+});
+
+// 5. UPDATE TRANSACTION
+router.put("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { productId, type, qty, source, destination, pic, note, userId } = req.body;
+
+    const qtyNumber = Number(qty);
+    const productIdNumber = Number(productId);
+    let userIdNumber = Number(userId || 1);
+
+    // Get fallback user if not exist
+    let checkUser = await prisma.user.findUnique({ where: { id: userIdNumber } });
+    if (!checkUser) {
+      const firstUser = await prisma.user.findFirst();
+      if (firstUser) userIdNumber = firstUser.id;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Get old transaction
+      const oldTx = await tx.transaction.findUnique({ where: { id } });
+      if (!oldTx) throw new Error("Transaksi tidak ditemukan");
+
+      // 2. Revert old stock
+      await tx.product.update({
+        where: { id: oldTx.productId },
+        data: {
+          stock: { increment: oldTx.type === 'IN' ? -oldTx.qty : oldTx.qty }
+        }
+      });
+
+      // 3. Get new product to validate stock if OUT
+      const newProduct = await tx.product.findUnique({ where: { id: productIdNumber } });
+      if (!newProduct) throw new Error("Produk baru tidak ditemukan");
+
+      if (type === "OUT" && newProduct.stock < qtyNumber) {
+        throw new Error(`Stok produk tidak mencukupi. Sisa stok: ${newProduct.stock}`);
+      }
+
+      // 4. Update transaction
+      const updatedTx = await tx.transaction.update({
+        where: { id },
+        data: {
+          type,
+          qty: qtyNumber,
+          source,
+          destination,
+          pic,
+          note,
+          productId: productIdNumber,
+        }
+      });
+
+      // 5. Apply new stock
+      await tx.product.update({
+        where: { id: productIdNumber },
+        data: {
+          stock: { increment: type === 'IN' ? qtyNumber : -qtyNumber }
+        }
+      });
+
+      // 6. Audit log
+      await tx.auditLog.create({
+        data: {
+          action: "UPDATE_TRANSACTION",
+          tableName: "Transaction",
+          description: `Memperbarui transaksi #${id} menjadi ${type} sejumlah ${qtyNumber}`,
+          userId: userIdNumber
+        }
+      });
+
+      return updatedTx;
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message || "Gagal memperbarui transaksi" });
+  }
+});
+
+// 6. DELETE TRANSACTION
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    await prisma.$transaction(async (tx) => {
+      const oldTx = await tx.transaction.findUnique({ where: { id }, include: { product: true } });
+      if (!oldTx) throw new Error("Transaksi tidak ditemukan");
+
+      // Revert stock
+      await tx.product.update({
+        where: { id: oldTx.productId },
+        data: {
+          stock: { increment: oldTx.type === 'IN' ? -oldTx.qty : oldTx.qty }
+        }
+      });
+
+      // Delete transaction
+      await tx.transaction.delete({ where: { id } });
+
+      // Audit Log
+      const user = await tx.user.findFirst();
+      if (user) {
+        await tx.auditLog.create({
+          data: {
+            action: "DELETE_TRANSACTION",
+            tableName: "Transaction",
+            description: `Menghapus transaksi ${oldTx.type} sejumlah ${oldTx.qty} untuk produk ${oldTx.product.name}`,
+            userId: user.id
+          }
+        });
+      }
+    });
+
+    res.json({ message: "Transaksi berhasil dihapus" });
+  } catch (error: any) {
+    res.status(400).json({ message: error.message || "Gagal menghapus transaksi" });
   }
 });
 

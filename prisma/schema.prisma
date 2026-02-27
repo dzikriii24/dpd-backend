@@ -15,12 +15,17 @@ datasource db {
 
 model User {
   id        Int      @id @default(autoincrement())
-  username  String   @unique
+  name      String
+  email     String   @unique
   password  String
+  role      Role     @default(viewer)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
   transactions Transaction[]
   auditLogs    AuditLog[]
+
+  @@map("UserNew")
 }
 
 enum Role {
@@ -37,6 +42,8 @@ model Category {
   createdAt   DateTime @default(now())
 
   products Product[]
+
+  @@map("CategoryNew")
 }
 
 model Product {
@@ -54,6 +61,8 @@ model Product {
   category    Category @relation(fields: [categoryId], references: [id])
 
   transactions Transaction[]
+
+  @@map("ProductNew")
 }
 
 model Transaction {
@@ -71,6 +80,8 @@ model Transaction {
 
   userId    Int
   user      User     @relation(fields: [userId], references: [id])
+
+  @@map("TransactionNew")
 }
 
 enum TransactionType {
@@ -87,6 +98,16 @@ model AuditLog {
 
   userId Int
   user   User @relation(fields: [userId], references: [id])
+
+  @@map("AuditLogNew")
 }
 
+model Satuan {
+  id          Int      @id @default(autoincrement())
+  nama        String
+  keterangan  String?
+  createdAt   DateTime @default(now())
+
+  @@map("SatuanNew")
+}
 

@@ -3,14 +3,14 @@ import * as userService from "../services/user.service";
 
 export const login = async (req: Request, res: Response) => {
   try {
-    // 1. Ambil data (Nama variabel HARUS username sesuai kiriman FE)
-    const { username, password } = req.body; 
+    // 1. Ambil data
+    const { email, password } = req.body;
 
     // 2. Cek di terminal VS Code (bukan browser) apakah datanya muncul
-    console.log("Body yang masuk ke Backend:", req.body); 
+    console.log("Body yang masuk ke Backend:", req.body);
 
     // 3. Lempar ke service
-    const result = await userService.login(username, password);
+    const result = await userService.login(email, password);
     res.status(200).json(result);
   } catch (error: any) {
     // Kirim pesan error asli (misal: "User tidak ditemukan!")

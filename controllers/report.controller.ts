@@ -7,25 +7,26 @@ import autoTable from "jspdf-autotable";
 const prisma = new PrismaClient();
 
 export const downloadReport = async (req: Request, res: Response) => {
-  // Ambil parameter dari frontend
-  const { startMonth, endMonth, fileType } = req.query;
+  // Ambil parameter startDate dan endDate asli
+  const { startDate, endDate, fileType, type } = req.query;
 
   try {
-    // 1. Konversi format 'YYYY-MM' ke objek Date untuk filter Prisma
-    const startDate = new Date(`${startMonth}-01T00:00:00Z`);
-    const endDate = new Date(`${endMonth}-01T00:00:00Z`);
-    endDate.setMonth(endDate.getMonth() + 1); // Tambah 1 bulan agar mencakup akhir bulan pilihannya
+    // Parsing String ke Object Date
+    const start = new Date(startDate as string);
+    const end = new Date(endDate as string);
+    end.setHours(23, 59, 59, 999); // Pastikan sampai penghujung hari yang dipilih
 
     // 2. Tarik data dari database berdasarkan range tanggal
-    const products = await prisma.product.findMany({
+    const transactions = await prisma.transaction.findMany({
       where: {
         createdAt: {
-          gte: startDate,
-          lt: endDate,
+          gte: start,
+          lte: end,
         },
+        ...(type ? { type: type as any } : {}),
       },
-      include: { category: true },
-      orderBy: { createdAt: 'desc' }
+      include: { product: { include: { category: true } } },
+      orderBy: { createdAt: 'desc' },
     });
 
     // --- LOGIC EXCEL ---
@@ -34,26 +35,30 @@ export const downloadReport = async (req: Request, res: Response) => {
       const worksheet = workbook.addWorksheet("Laporan Inventaris");
 
       worksheet.columns = [
-        { header: "Kode", key: "code", width: 15 },
+        { header: "Tanggal", key: "date", width: 20 },
+        { header: "Tipe", key: "type", width: 15 },
+        { header: "Kode Barang", key: "code", width: 15 },
         { header: "Nama Barang", key: "name", width: 30 },
-        { header: "Kategori", key: "category", width: 20 },
-        { header: "Stok", key: "stock", width: 10 },
-        { header: "Tanggal Input", key: "date", width: 20 },
+        { header: "Jumlah", key: "qty", width: 10 },
+        { header: "PIC", key: "pic", width: 20 },
+        { header: "Catatan", key: "note", width: 30 },
       ];
 
-      products.forEach((p) => {
+      transactions.forEach((t) => {
         worksheet.addRow({
-          code: p.code,
-          name: p.name,
-          category: p.category.name,
-          stock: p.stock,
-          date: p.createdAt.toLocaleDateString(),
+          date: t.createdAt.toLocaleDateString(),
+          type: t.type === 'IN' ? 'Barang Masuk' : 'Barang Keluar',
+          code: t.product.code,
+          name: t.product.name,
+          qty: t.type === 'IN' ? `+${t.qty}` : `-${t.qty}`,
+          pic: t.pic || '-',
+          note: t.note || '-',
         });
       });
 
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename=Laporan-${startMonth}.xlsx`);
-      
+      res.setHeader("Content-Disposition", `attachment; filename=Laporan-Inventaris.xlsx`);
+
       await workbook.xlsx.write(res);
       return res.end();
     }
@@ -63,18 +68,20 @@ export const downloadReport = async (req: Request, res: Response) => {
       const doc = new jsPDF();
 
       doc.setFontSize(18);
-      doc.text("LAPORAN INVENTARIS BARANG", 14, 15);
-      
-      // CARA PANGGIL YANG BENER:
+      doc.text("LAPORAN TRANSAKSI INVENTARIS", 14, 15);
+      doc.setFontSize(11);
+      const titleType = type === 'IN' ? 'Barang Masuk' : type === 'OUT' ? 'Barang Keluar' : 'Semua Transaksi';
+      doc.text(`Periode: ${start.toLocaleDateString()} - ${end.toLocaleDateString()} | Tipe: ${titleType}`, 14, 22);
+
       autoTable(doc, {
         startY: 30,
-        head: [["Kode", "Nama Barang", "Kategori", "Stok", "Tanggal"]],
-        body: products.map((p) => [
-          p.code,
-          p.name,
-          p.category.name,
-          p.stock.toString(),
-          new Date(p.createdAt).toLocaleDateString(),
+        head: [["Tanggal", "Tipe", "Nama Barang", "QTY", "PIC"]],
+        body: transactions.map((t) => [
+          new Date(t.createdAt).toLocaleDateString(),
+          t.type === 'IN' ? 'Masuk' : 'Keluar',
+          t.product.name,
+          t.type === 'IN' ? `+${t.qty}` : `-${t.qty}`,
+          t.pic || '-',
         ]),
         headStyles: { fillColor: [37, 99, 235] },
       });

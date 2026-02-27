@@ -6,9 +6,9 @@ const router = Router()
 //CREATE PRODUCT
 router.post("/", async (req, res) => {
     try {
-        const { 
+        const {
             code,
-            name,  
+            name,
             categoryId,
             unit,
             stock,
@@ -32,6 +32,18 @@ router.post("/", async (req, res) => {
                 isActive: true,
             },
         })
+
+        const user = await prisma.user.findFirst();
+        if (user) {
+            await prisma.auditLog.create({
+                data: {
+                    action: "CREATE_PRODUCT",
+                    tableName: "Product",
+                    description: `Menambahkan produk baru: ${product.name} (${product.code})`,
+                    userId: user.id
+                }
+            })
+        }
 
         res.status(201).json(product)
     } catch (error: any) {
@@ -88,6 +100,18 @@ router.put("/:id", async (req, res) => {
             data: req.body,
         })
 
+        const user = await prisma.user.findFirst();
+        if (user) {
+            await prisma.auditLog.create({
+                data: {
+                    action: "UPDATE_PRODUCT",
+                    tableName: "Product",
+                    description: `Memperbarui data produk: ${product.name} (${product.code})`,
+                    userId: user.id
+                }
+            })
+        }
+
         res.json(product)
     } catch (error: any) {
         res.status(500).json({ message: error.message })
@@ -99,9 +123,25 @@ router.delete("/:id", async (req, res) => {
     try {
         const id = Number(req.params.id)
 
+        const productToDel = await prisma.product.findUnique({ where: { id } });
+
         await prisma.product.delete({
             where: { id },
         })
+
+        if (productToDel) {
+            const user = await prisma.user.findFirst();
+            if (user) {
+                await prisma.auditLog.create({
+                    data: {
+                        action: "DELETE_PRODUCT",
+                        tableName: "Product",
+                        description: `Menghapus produk: ${productToDel.name} (${productToDel.code})`,
+                        userId: user.id
+                    }
+                })
+            }
+        }
 
         res.json({ message: "Product deleted" })
     } catch (error: any) {
